@@ -1,0 +1,12 @@
+# Local environment and generated artifacts
+.env
+*.local
+
+# Experiment output
+experiments/results/*
+!experiments/results/.gitkeep
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
