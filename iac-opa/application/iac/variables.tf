@@ -1,16 +1,5 @@
-variable "bucket_name" {
-  description = "Name of the S3 bucket."
-  type        = string
-}
-
-variable "tags" {
-  description = "Tags to apply to the S3 bucket."
-  type        = map(string)
-  default     = {}
-}
-
-variable "public_access_block" {
-  description = "Public access block settings for the S3 bucket."
+variable "bucket_public_access_block" {
+  description = "Public access block settings for the customer documents bucket."
   type = object({
     block_public_acls       = bool
     block_public_policy     = bool
@@ -25,14 +14,14 @@ variable "public_access_block" {
   }
 }
 
-variable "versioning_enabled" {
-  description = "Whether S3 bucket versioning should be enabled."
+variable "bucket_versioning_enabled" {
+  description = "Whether versioning is enabled for the customer documents bucket."
   type        = bool
   default     = true
 }
 
-variable "encryption" {
-  description = "Default server-side encryption settings for the S3 bucket."
+variable "bucket_encryption" {
+  description = "Default server-side encryption settings for the customer documents bucket."
   type = object({
     enabled            = bool
     sse_algorithm      = string
@@ -47,8 +36,8 @@ variable "encryption" {
   }
 }
 
-variable "deny_insecure_transport" {
-  description = "Whether to attach a bucket policy that denies non-SSL requests."
+variable "bucket_deny_insecure_transport" {
+  description = "Whether the customer documents bucket denies non-SSL requests."
   type        = bool
   default     = true
 }

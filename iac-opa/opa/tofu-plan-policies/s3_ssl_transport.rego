@@ -3,16 +3,16 @@ package terraform.compliance.s3
 import rego.v1
 
 # AWS-S3-004
-# Confidential S3 buckets must deny requests made over non-SSL transport.
+# S3 buckets must deny requests made over non-SSL transport.
 violations contains violation if {
-	bucket := confidential_s3_buckets[_]
+	bucket := s3_buckets[_]
 	not denies_non_ssl_transport(bucket)
 
 	violation := {
 		"policy_id": "AWS-S3-004",
 		"severity": "high",
 		"resource": bucket.address,
-		"message": "Confidential S3 buckets must deny non-SSL requests.",
+		"message": "S3 buckets must deny non-SSL requests.",
 		"remediation": "Attach an aws_s3_bucket_policy with a Deny statement where the condition Bool aws:SecureTransport is false.",
 	}
 }

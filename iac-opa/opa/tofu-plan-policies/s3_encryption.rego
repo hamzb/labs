@@ -3,16 +3,16 @@ package terraform.compliance.s3
 import rego.v1
 
 # AWS-S3-003
-# Confidential S3 buckets must use SSE-KMS with a customer managed KMS key.
+# S3 buckets must use SSE-KMS with a customer managed KMS key.
 violations contains violation if {
-	bucket := confidential_s3_buckets[_]
+	bucket := s3_buckets[_]
 	not has_cmk_encryption(bucket)
 
 	violation := {
 		"policy_id": "AWS-S3-003",
 		"severity": "critical",
 		"resource": bucket.address,
-		"message": "Confidential S3 buckets must use SSE-KMS with a customer managed KMS key.",
+		"message": "S3 buckets must use SSE-KMS with a customer managed KMS key.",
 		"remediation": "Configure S3 default encryption with sse_algorithm set to aws:kms or aws:kms:dsse and kms_master_key_id set to a customer managed KMS key.",
 	}
 }

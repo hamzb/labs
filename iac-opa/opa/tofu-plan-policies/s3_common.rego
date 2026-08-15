@@ -13,10 +13,9 @@ decision := {
 	"violations": violations,
 }
 
-confidential_s3_buckets contains bucket if {
+s3_buckets contains bucket if {
 	bucket := managed_resources[_]
 	bucket.type == "aws_s3_bucket"
-	object.get(object.get(bucket.values, "tags", {}), "data_classification", "") == "confidential"
 }
 
 # planned_values represents the proposed final configuration. walk() lets the
