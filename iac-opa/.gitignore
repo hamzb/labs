@@ -1,0 +1,11 @@
+_*
+
+# OpenTofu working files and local state
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.json
+opa-decision.json
+crash.log
+crash.*.log
