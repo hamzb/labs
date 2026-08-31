@@ -51,8 +51,8 @@ resource "aws_s3_bucket_policy" "deny_insecure_transport" {
         Principal = "*"
         Action    = "s3:*"
         Resource = [
-          aws_s3_bucket.this.arn,
-          "${aws_s3_bucket.this.arn}/*",
+          "arn:aws:s3:::${var.bucket_name}",
+          "arn:aws:s3:::${var.bucket_name}/*",
         ]
         Condition = {
           Bool = {
