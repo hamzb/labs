@@ -1,4 +1,4 @@
-# OPA as an IaC Compliance Gate for OpenTofu and Terraform
+# Open Policy Agent (OPA) as an IaC Compliance Gate for OpenTofu and Terraform
 
 Infrastructure compliance is often detected too late.
 
@@ -8,27 +8,31 @@ For infrastructure as code, that should not be the only enforcement point.
 
 OpenTofu and Terraform both produce a plan before infrastructure is applied. That plan is a useful control point because it describes what the IaC workflow intends to create, change, or delete. If the plan can be evaluated before `apply`, then preventable compliance violations can be caught before they become deployed infrastructure.
 
-That is where Open Policy Agent fits in.
+That is where **Open Policy Agent (OPA)** fits in.
 
-OPA can evaluate the OpenTofu or Terraform plan JSON and return a policy decision before the apply step runs. In this lab, that decision has two purposes:
+OPA can evaluate the OpenTofu or Terraform plan and return a policy decision before the apply step runs. In this lab, we will leverage that decision for two purposes:
 
 - report compliance violations clearly to the engineer
-- block `tofu apply` when the planned infrastructure does not satisfy the required controls
+- gate the infrastructure deployment performed by `tofu apply` when the planned infrastructure does not satisfy the required controls
 
-This article uses OpenTofu, but the pattern is valid for Terraform as well. The command names differ slightly, but the model is the same: generate a saved plan, export it to JSON, evaluate the JSON with OPA, and use the decision before apply.
+During the course of this lab and article, we use OpenTofu as the IaC tool, but the same patterns are valid for Terraform. By the end, we will have a concrete IaC compliance gate that surfaces policy violations early, blocks unsafe applies, and gives teams a practical model for CI/CD enforcement.
 
 ## Lab Scenario
 
-The example application is a customer document processing service. Customers upload documents through the application, and those files are eventually stored in an S3 bucket for downstream processing.
+To demonstrate OPA's capabilities and how it fits into an IaC workflow, we will simulate one infrastructure component of a real enterprise application.
 
-That bucket is not a generic storage resource. It stores sensitive customer information, so it needs to meet a baseline set of security requirements before it is deployed:
+The application in this scenario is a customer document processing service. Customers upload documents through the application, and those files are eventually stored in an S3 bucket for downstream processing.
+
+Our focus will be the S3 bucket and the compliance enforcement flow around it. This is an intentionally simplified scope: the goal is not to deploy a full production-grade architecture for the application, but to show how OPA can evaluate planned infrastructure before it is applied.
+
+In this scenario, the S3 bucket stores sensitive customer information, so it needs to meet a baseline set of security requirements before it is deployed:
 
 - public access must be blocked
 - versioning must be enabled
-- default encryption must use a customer managed KMS key
+- default encryption must use a customer-managed KMS key
 - non-SSL requests must be denied
 
-The lab focuses on S3 to keep the example small, but the same pattern applies to other controls: security group rules, IAM permissions, load balancer TLS settings, database encryption, backup policies, network exposure, and Kubernetes security settings.
+> Note: This article only showcases S3 bucket configuration, but the same pattern applies to other cloud components and security configurations: security group rules, IAM permissions, load balancer TLS settings, database encryption, backup policies, network exposure, and Kubernetes security settings.
 
 ## Repository Structure
 
