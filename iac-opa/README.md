@@ -36,7 +36,9 @@ In this scenario, the S3 bucket stores sensitive customer information, so it nee
 
 ## Repository Structure
 
-The repository is intentionally small. The important source paths are:
+The lab content for this article lives in [this repository](.).
+
+Before walking through the workflow, let's look at its structure and the purpose of the main directories:
 
 ```text
 .
@@ -75,12 +77,12 @@ Generated files such as `.terraform/`, `*.tfplan`, `*.tfplan.json`, `*.tfstate`,
 
 ## Tools Used
 
-The lab uses four tools:
+We will uses the following tools for this demo:
 
-- OpenTofu defines the infrastructure and generates the execution plan.
-- LocalStack provides a local AWS-compatible endpoint.
-- OPA evaluates the exported plan JSON and returns a compliance decision.
-- Make provides repeatable commands for the local workflow.
+- OpenTofu: defines the infrastructure and generates the execution plan.
+- LocalStack: provides a local AWS-compatible endpoint.
+- OPA evaluates: the exported plan JSON and returns a compliance decision.
+- Make provides: repeatable commands for the local workflow.
 
 The AWS provider is configured to target LocalStack:
 
@@ -101,13 +103,11 @@ provider "aws" {
 }
 ```
 
-## Baseline OpenTofu Flow
+## OpenTofu Code Structure and Baseline Flow
 
-Before adding OPA, OpenTofu already gives us important checks. It can format the configuration, validate syntax and provider schema, resolve variables, expand modules, and generate an execution plan.
+Before introducing OPA, we need to understand the OpenTofu code used in the demo: the root module, the reusable S3 bucket module, and the variable files used to generate compliant and non-compliant plans. After that, we will look at the typical OpenTofu flow and where its responsibility stops.
 
-Those checks are necessary, but they are not compliance enforcement.
-
-The root module in [`application/iac/main.tf`](application/iac/main.tf) consumes the reusable bucket module:
+The root module is in [`application/iac/main.tf`](application/iac/main.tf):
 
 ```hcl
 module "customer_documents" {
@@ -128,7 +128,7 @@ module "customer_documents" {
 }
 ```
 
-The child module in [`modules/secure-bucket/`](modules/secure-bucket/) creates the S3 bucket and related security controls:
+The root module sources the child module from [`modules/secure-bucket/`](modules/secure-bucket/). That child module defines the S3 bucket and the related security controls:
 
 - `aws_s3_bucket`
 - `aws_s3_bucket_public_access_block`
@@ -136,7 +136,7 @@ The child module in [`modules/secure-bucket/`](modules/secure-bucket/) creates t
 - `aws_s3_bucket_server_side_encryption_configuration`
 - `aws_s3_bucket_policy` to deny non-SSL requests
 
-The controls are variable-driven. That lets the lab generate both compliant and non-compliant plans without editing module code for every test.
+The controls are variable-driven. For the demo, this lets us generate both non-compliant and compliant plans without editing the module code between tests.
 
 The non-compliant variable file, [`application/iac/tfvars/non-compliant.tfvars`](application/iac/tfvars/non-compliant.tfvars), intentionally weakens the bucket:
 
@@ -160,7 +160,7 @@ bucket_encryption = {
 bucket_deny_insecure_transport = false
 ```
 
-The compliant variable file, [`application/iac/tfvars/compliant.tfvars`](application/iac/tfvars/compliant.tfvars), enables the required controls:
+The compliant variable file, [`application/iac/tfvars/compliant.tfvars`](application/iac/tfvars/compliant.tfvars), enables the required security controls:
 
 ```hcl
 bucket_public_access_block = {
@@ -182,17 +182,11 @@ bucket_encryption = {
 bucket_deny_insecure_transport = true
 ```
 
-OpenTofu can still generate a plan from the non-compliant input:
-
-```bash
-make tofu-plan TFVARS="tfvars/non-compliant.tfvars"
-```
-
-That is expected. OpenTofu is checking whether the configuration is valid and whether it can calculate the proposed changes. It is not deciding whether the bucket satisfies the organization’s security requirements.
-
-A syntactically valid plan can still be a bad plan. That is the gap the OPA compliance gate closes.
+The typical OpenTofu flow is then straightforward: validate the configuration, generate a plan, review the proposed changes, and apply the plan. Those checks are necessary, but they can be improved with stronger compliance and security controls driven by OPA. That is what we will dive into next.
 
 ## Where OPA Fits in the Flow
+
+The next question is where OPA should be introduced in the OpenTofu flow, and which artifact is the best target for policy evaluation.
 
 OPA fits best after OpenTofu has generated a plan and before that plan is applied.
 
@@ -219,29 +213,69 @@ OPA evaluates the plan JSON
 apply only if the OPA decision allows it
 ```
 
-OpenTofu does not write the full plan JSON directly from `tofu plan`. The usual flow is to save the plan as a binary file first, then export that saved plan to JSON:
+The default saved plan file is binary, so we need to export it to JSON before OPA can evaluate it:
 
 ```bash
 tofu plan -out=customer-documents.tfplan
 tofu show -json customer-documents.tfplan > customer-documents.tfplan.json
 ```
 
-The resulting JSON contains several sections, including the proposed final state, resource changes, prior state, and parsed configuration. The policies in this lab evaluate `planned_values`, because they care about the final infrastructure shape that would exist after apply.
+The resulting JSON contains several sections, including the proposed final state, resource changes, prior state, and parsed configuration. The policies in this demo evaluate `planned_values`, because they care about the final infrastructure shape that would exist after apply.
 
-This matters because the same saved plan can be evaluated and then applied:
+A shortened sample of the `planned_values` from the OpenTofu plan looks like this:
 
-```bash
-opa eval --data opa/tofu-plan-policies --input customer-documents.tfplan.json ...
-tofu apply customer-documents.tfplan
+```json
+{
+  "planned_values": {
+    "root_module": {
+      "child_modules": [
+        {
+          "address": "module.customer_documents",
+          "resources": [
+            {
+              "address": "module.customer_documents.aws_s3_bucket.this",
+              "mode": "managed",
+              "type": "aws_s3_bucket",
+              "name": "this",
+              "values": {
+                "bucket": "customer-document-processing-lab",
+                "tags": {
+                  "data_classification": "confidential",
+                  "environment": "local",
+                  "managed_by": "opentofu",
+                  "owner": "document-platform"
+                }
+              }
+            },
+            {
+              "address": "module.customer_documents.aws_s3_bucket_public_access_block.this",
+              "mode": "managed",
+              "type": "aws_s3_bucket_public_access_block",
+              "name": "this",
+              "values": {
+                "block_public_acls": false,
+                "block_public_policy": true,
+                "ignore_public_acls": true,
+                "restrict_public_buckets": true
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
 ```
 
-That gives the policy gate a clear contract: OPA evaluates the plan OpenTofu is about to apply.
+Now that we have established where OPA fits in the IaC flow and which artifact to validate against our policies, the next section looks at the OPA policies themselves.
 
-## OPA Policies for S3 Compliance
+## Understanding the OPA Policy Layer
 
-The Rego policies live in [`opa/tofu-plan-policies/`](opa/tofu-plan-policies/).
+This section briefly explains the Rego policies used in the lab. Since the lab focuses on S3 bucket compliance, the policies are dedicated to S3 controls. The important parts for this article are the policy file structure, the input OPA evaluates, and the decision output OPA returns.
 
-The policies are split by control:
+We will not go too deep into Rego syntax or policy development here as it's not the purpose of this article. For a deeper Rego walkthrough, use the official OPA documentation: [Policy Language](https://www.openpolicyagent.org/docs/policy-language) and [Policy Reference](https://www.openpolicyagent.org/docs/policy-reference).
+
+The Rego policies live in [`opa/tofu-plan-policies/`](opa/tofu-plan-policies/) and are split by control:
 
 ```text
 opa/tofu-plan-policies/
@@ -264,9 +298,46 @@ That package is exposed through OPA as:
 data.terraform.compliance.s3
 ```
 
-The files are separated for readability. OPA does not treat each file as an isolated policy. Since they share the same package, the rules are loaded together and can call each other.
+The files are separated for readability, but they are part of the same logical policy package. OPA groups rules by package, not by file name.
 
-The common policy file, [`s3_common.rego`](opa/tofu-plan-policies/s3_common.rego), defines the shared data model:
+### Policy Input
+
+OPA receives the exported OpenTofu plan JSON as input. The policies focus on:
+
+```rego
+input.planned_values.root_module
+```
+
+That is where the plan describes the proposed final infrastructure state. The shared policy file, [`s3_common.rego`](opa/tofu-plan-policies/s3_common.rego), walks that structure and selects every planned S3 bucket:
+
+```rego
+managed_resources contains resource if {
+	[_, resource] := walk(input.planned_values.root_module)
+	is_object(resource)
+	object.get(resource, "mode", "") == "managed"
+	object.get(resource, "address", "") != ""
+	object.get(resource, "type", "") != ""
+	is_object(object.get(resource, "values", null))
+}
+
+s3_buckets contains bucket if {
+	bucket := managed_resources[_]
+	bucket.type == "aws_s3_bucket"
+}
+```
+
+The lab implements four S3 checks:
+
+```text
+AWS-S3-001  Public access must be fully blocked
+AWS-S3-002  Versioning must be enabled
+AWS-S3-003  Default encryption must use SSE-KMS with a customer managed key
+AWS-S3-004  Non-SSL requests must be denied by bucket policy
+```
+
+### Policy Output
+
+The policies return one decision object:
 
 ```rego
 default allow := false
@@ -279,72 +350,16 @@ decision := {
 	"allow": allow,
 	"violations": violations,
 }
-
-s3_buckets contains bucket if {
-	bucket := managed_resources[_]
-	bucket.type == "aws_s3_bucket"
-}
 ```
 
-The `decision` object is the interface between OPA and the workflow:
+The decision is the contract between OPA and the workflow:
 
-- `violations` is the human-facing output.
-- `allow` is the automation-facing gate decision.
+- `violations` is the human-facing output. It explains which resources failed and why.
+- `allow` is the automation-facing output. It is `true` only when there are no violations.
 
-The policy walks `input.planned_values.root_module` to find managed resources:
+That keeps the policy interface simple: engineers get actionable findings, and the pipeline gets a single allow/deny decision.
 
-```rego
-managed_resources contains resource if {
-	[_, resource] := walk(input.planned_values.root_module)
-	is_object(resource)
-	object.get(resource, "mode", "") == "managed"
-	object.get(resource, "address", "") != ""
-	object.get(resource, "type", "") != ""
-	is_object(object.get(resource, "values", null))
-}
-```
-
-That means every planned `aws_s3_bucket` is in scope. The checks do not depend on tags such as `data_classification = "confidential"`. In this lab, every S3 bucket must satisfy the baseline controls.
-
-The lab checks four requirements:
-
-```text
-AWS-S3-001  Public access must be fully blocked
-AWS-S3-002  Versioning must be enabled
-AWS-S3-003  Default encryption must use SSE-KMS with a customer managed key
-AWS-S3-004  Non-SSL requests must be denied by bucket policy
-```
-
-Each policy emits structured findings into the same `violations` set. The public access policy, for example, follows this shape:
-
-```rego
-violations contains violation if {
-	bucket := s3_buckets[_]
-	not has_complete_public_access_block(bucket)
-
-	violation := {
-		"policy_id": "AWS-S3-001",
-		"severity": "high",
-		"resource": bucket.address,
-		"message": "S3 buckets must block all forms of public access.",
-		"remediation": "...",
-	}
-}
-```
-
-The pattern is consistent:
-
-1. find every S3 bucket in the plan
-2. check whether the required companion control exists
-3. emit a structured violation when the control is missing or misconfigured
-
-When OPA runs, it loads every `.rego` file in the policy directory and evaluates the requested query:
-
-```rego
-data.terraform.compliance.s3.decision
-```
-
-OPA is query-driven, not script-driven. It is not executing files top to bottom like a shell script. It evaluates the rules needed to build the requested decision.
+Next, we will see how to orchestrate the OpenTofu flow, including OPA evaluation and the enforcement gate, with Make.
 
 ## Makefile Workflow
 
