@@ -32,7 +32,7 @@ In this scenario, the S3 bucket stores sensitive customer information, so it nee
 - default encryption must use a customer-managed KMS key
 - non-SSL requests must be denied
 
-> Note: This article only showcases S3 bucket configuration, but the same pattern applies to other cloud components and security configurations: security group rules, IAM permissions, load balancer TLS settings, database encryption, backup policies, network exposure, and Kubernetes security settings.
+> Note: This article only demonstrates S3 bucket configuration, but the same pattern applies to other cloud components and security configurations: security group rules, IAM permissions, load balancer TLS settings, database encryption, backup policies, network exposure, and Kubernetes security settings.
 
 ## Repository Structure
 
@@ -77,12 +77,14 @@ Generated files such as `.terraform/`, `*.tfplan`, `*.tfplan.json`, `*.tfstate`,
 
 ## Tools Used
 
-We will uses the following tools for this demo:
+The demo uses the following tools:
 
 - OpenTofu: defines the infrastructure and generates the execution plan.
 - LocalStack: provides a local AWS-compatible endpoint.
-- OPA evaluates: the exported plan JSON and returns a compliance decision.
-- Make provides: repeatable commands for the local workflow.
+- OPA: evaluates the exported plan JSON and returns a compliance decision.
+- Make: provides repeatable commands for the local workflow.
+
+> Note: HashiCorp’s [`tfpolicy`](https://developer.hashicorp.com/terraform/policy) targets a similar problem for Terraform users, but it is Terraform-specific and HCL-based. We chose OPA here because it is a general policy engine that can also be used beyond IaC, including Kubernetes admission control, CI/CD decisions, and other platform guardrails.
 
 The AWS provider is configured to target LocalStack:
 
@@ -331,7 +333,7 @@ The lab implements four S3 checks:
 ```text
 AWS-S3-001  Public access must be fully blocked
 AWS-S3-002  Versioning must be enabled
-AWS-S3-003  Default encryption must use SSE-KMS with a customer managed key
+AWS-S3-003  Default encryption must use SSE-KMS with a customer-managed KMS key
 AWS-S3-004  Non-SSL requests must be denied by bucket policy
 ```
 
@@ -361,75 +363,80 @@ That keeps the policy interface simple: engineers get actionable findings, and t
 
 Next, we will see how to orchestrate the OpenTofu flow, including OPA evaluation and the enforcement gate, with Make.
 
-## Makefile Workflow
+## Orchestrating the IaC Compliance Flow with Make
+
+Instead of running the OpenTofu and OPA commands serially and manually passing inputs between each step, we will use Make to orchestrate the workflow.
 
 The [`Makefile`](Makefile) keeps the OpenTofu and OPA workflow explicit:
 
 ```make
+# Format the OpenTofu code in the application root module and reusable modules.
 tofu-fmt:
 	tofu fmt -recursive $(TOFU_FMT_DIRS)
 
+# Validate the OpenTofu root module.
 tofu-validate:
 	tofu -chdir=$(IAC_DIR) validate
 
+# Generate a saved binary plan, optionally using tfvars passed through TFVARS.
 tofu-plan:
 	tofu -chdir=$(IAC_DIR) plan -refresh=false $(TOFU_VAR_FILE_ARGS) -out=$(PLAN_FILE)
 
+# Export the saved binary plan to JSON so OPA can evaluate it.
 tofu-plan-json: tofu-plan
 	tofu -chdir=$(IAC_DIR) show -json $(PLAN_FILE) > $(IAC_DIR)/$(PLAN_JSON)
 
+# Evaluate the OPA policy decision against the exported plan JSON.
 opa-eval:
 	opa eval --data $(OPA_POLICY_DIR) --input $(IAC_DIR)/$(PLAN_JSON) --format raw '$(OPA_DECISION_QUERY)' > $(IAC_DIR)/$(OPA_DECISION_FILE)
 	jq . $(IAC_DIR)/$(OPA_DECISION_FILE)
 
+# Fail the workflow if the saved OPA decision does not allow the plan.
 opa-check:
 	jq -e '.allow == true' $(IAC_DIR)/$(OPA_DECISION_FILE) > /dev/null
 
+# Run the report-only compliance evaluation flow.
 compliance-eval: tofu-fmt tofu-validate tofu-plan-json opa-eval
 
+# Run the compliance evaluation, enforce the OPA decision, then apply the saved plan.
 apply: compliance-eval opa-check
 	tofu -chdir=$(IAC_DIR) apply $(PLAN_FILE)
 ```
 
-The important targets are:
+The two targets that matter most from a workflow perspective are the ones engineers will actually use:
 
-- `compliance-eval` runs format, validate, plan, plan JSON export, and OPA evaluation. It is useful for development feedback because it shows violations without applying anything.
-- `apply` runs the same evaluation path, then `opa-check`, then `tofu apply`. If OPA returns `allow: false`, Make stops before apply.
+- `compliance-eval` is the report-only path. It runs `tofu-fmt`, `tofu-validate`, `tofu-plan-json`, and `opa-eval`. A user running this target gets an OpenTofu plan and an OPA decision showing whether the planned infrastructure violates policy. It does not apply infrastructure.
+- `apply` is the enforcement path. It runs the same evaluation flow through `compliance-eval`, then runs `opa-check`, and only then runs `tofu apply`. A user running this target either gets a blocked apply with policy violations, or a successful apply when the OPA decision allows the plan.
 
-The decision is written once by `opa-eval`:
+With the workflow defined, we can now put it into practice and observe how OPA behaves with non-compliant and compliant plans.
 
-```bash
-opa eval \
-  --data opa/tofu-plan-policies \
-  --input application/iac/customer-documents.tfplan.json \
-  --format raw \
-  'json.marshal(data.terraform.compliance.s3.decision)' \
-  > application/iac/opa-decision.json
-```
+## Testing the Compliance Gate
 
-Then `opa-check` reads that saved decision:
+This section tests the gate in two modes: first as a report-only compliance check, then as an enforcement point before apply.
 
-```bash
-jq -e '.allow == true' application/iac/opa-decision.json > /dev/null
-```
+### Step 1 — Initialize the OpenTofu Working Directory
 
-OPA does not need to run twice. One execution produces a decision document with both the engineer-facing violations and the automation-facing allow/deny result.
+Start LocalStack, then initialize the OpenTofu working directory.
 
-## Running the Lab
-
-Start LocalStack, then initialize the OpenTofu working directory:
+**Command**
 
 ```bash
 tofu -chdir=application/iac init
 ```
 
-To generate a non-compliant plan and show policy findings:
+This prepares the local working directory and downloads the required provider dependencies.
+
+### Step 2 — Generate a Non-Compliant Plan and Report Findings
+
+The first test uses the non-compliant variable file. The goal is to show that OPA can return useful findings without applying anything.
+
+**Command**
 
 ```bash
 make compliance-eval TFVARS="tfvars/non-compliant.tfvars"
 ```
 
-OPA returns a decision like this:
+**OPA Decision Output**
 
 ```json
 {
@@ -454,7 +461,7 @@ OPA returns a decision like this:
       "severity": "high"
     },
     {
-      "message": "S3 buckets must use SSE-KMS with a customer managed KMS key.",
+      "message": "S3 buckets must use SSE-KMS with a customer-managed KMS key.",
       "policy_id": "AWS-S3-003",
       "resource": "module.customer_documents.aws_s3_bucket.this",
       "severity": "critical"
@@ -465,35 +472,45 @@ OPA returns a decision like this:
 
 This output is useful during development. It tells the engineer what failed without applying anything.
 
-To prove that the same decision can enforce the apply path:
+### Step 3 — Use the Same Decision as an Apply Gate
+
+Next, we use the same non-compliant configuration through the `apply` target. This tests whether the OPA decision can stop deployment.
+
+**Command**
 
 ```bash
 make apply TFVARS="tfvars/non-compliant.tfvars"
 ```
 
-OpenTofu can still create a valid plan:
+**Plan Output**
 
 ```text
 Plan: 3 to add, 0 to change, 0 to destroy.
 Saved the plan to: customer-documents.tfplan
 ```
 
-But OPA returns `allow: false`, and `opa-check` fails:
+The OpenTofu plan is valid, but OPA returns a decision document with `allow: false`. That causes the `opa-check` step to fail. The outcome is that `make` stops before `tofu apply`.
+
+**OPA Gate Output**
 
 ```text
 jq -e '.allow == true' application/iac/opa-decision.json > /dev/null
-make: *** [Makefile:45: opa-check] Error 1
+make: *** [Makefile:...: opa-check] Error 1
 ```
 
-Because `allow` is `false`, Make stops before `tofu apply`.
+### Step 4 — Apply a Compliant Plan
 
-Now run the compliant path:
+The final test uses the compliant variable file. This plan should satisfy the OPA policies and continue to apply.
+
+**Command**
 
 ```bash
 make apply TFVARS="tfvars/compliant.tfvars"
 ```
 
-The plan includes the required controls:
+The plan includes the required controls.
+
+**Plan Output**
 
 ```text
 aws_s3_bucket_public_access_block.this
@@ -513,7 +530,9 @@ aws_s3_bucket_policy.deny_insecure_transport[0]
   Deny when aws:SecureTransport = "false"
 ```
 
-OPA returns an allow decision:
+OPA returns an allow decision.
+
+**OPA Decision Output**
 
 ```json
 {
@@ -522,7 +541,9 @@ OPA returns an allow decision:
 }
 ```
 
-Then the apply continues:
+Then the apply continues.
+
+**Apply Output**
 
 ```text
 tofu -chdir=application/iac apply customer-documents.tfplan
@@ -536,73 +557,78 @@ customer_documents_bucket_arn = "arn:aws:s3:::customer-document-processing-lab"
 
 That is the core behavior of the gate. OPA evaluates the JSON exported from the saved plan, and OpenTofu applies that same saved plan only when the decision allows it.
 
+With the mechanics proven, the next question is how this pattern should be organized in a real engineering environment.
+
 ## Design Choices for an IaC Compliance Gate
 
-The lab shows the mechanics. In a real engineering organization, the value of this pattern depends on a few design choices.
+The lab shows the mechanics, but the engineering design around an IaC compliance gate depends on the organization. A small team, a central platform team, and a mature enterprise security organization will not necessarily manage policies, ownership, and enforcement in the same way.
 
-### Where should policies live?
+### Small Team or Lab Setup
 
-For a small team or a lab, keeping OPA policies in the same repository as the IaC code is reasonable. It keeps the workflow simple and makes the policy logic easy to inspect while developing the infrastructure.
+For a small team, the simplest useful setup is usually enough: keep the OPA policies in the same repository as the IaC code and run the gate with local tooling such as Make.
 
-In a larger organization, I would usually separate policy code from application IaC code:
+Recommended practices:
 
-- application and platform teams own root modules, reusable modules, and deployment workflows
-- security, governance, or platform governance teams own the policy repository
-- CI pipelines consume the policies as a versioned artifact or pinned repository reference
+- keep policies close to the IaC code
+- run the report-only target locally during development
+- use a guarded apply target so policy failures stop deployment
+- keep the policy interface simple: `violations` for humans, `allow` for automation
+- avoid over-engineering policy distribution before there are multiple consumers
 
-This avoids copying policy logic across many IaC repositories and makes policy changes reviewable and reusable.
+This is the model used in the lab. It is easy to understand, easy to inspect, and good enough to prove the value of early compliance checks.
 
-### Who should maintain the policies?
+### Platform Team Supporting Multiple Applications
 
-Policy ownership should reflect the difference between compliance intent and infrastructure implementation.
+Once several applications or teams need the same controls, policies should become reusable. Keeping separate copies of the same Rego logic in every repository will create drift.
 
-- Security or governance teams define the control intent.
-- Platform teams translate that intent into reusable infrastructure patterns and CI/CD integration.
-- Application teams consume the modules, review the policy feedback, and fix non-compliant configuration before it reaches the cloud environment.
+Recommended practices:
 
-The important point is that policy maintenance should not become detached from engineering reality. A policy that cannot be understood, tested, or remediated by engineers will eventually be bypassed or ignored.
+- move reusable policies into a shared policy repository or package
+- pin policy versions in application pipelines
+- keep local Make targets aligned with CI behavior
+- run compliance checks in CI before merge
+- keep remediation messages practical for application teams
+- define clear ownership between platform teams and application teams
 
-### Where should the gate run?
+At this stage, policy-as-code starts becoming shared platform capability. The policy logic should not depend on one application repository, and application teams should not need to understand every detail of the policy engine to consume the gate.
 
-The same OPA policy can be useful at multiple stages:
+### Mature Enterprise Governance Model
 
-- local execution gives engineers fast feedback before opening a pull request
-- CI execution blocks non-compliant pull requests before merge
-- CD or pre-apply execution ensures the exact saved plan being applied was evaluated
-- shared pipeline templates reduce the chance that teams skip the compliance step
+In a mature organization, policies should be governed centrally and consumed through standard delivery workflows. The challenge is no longer just writing a policy; it is keeping enforcement consistent across many repositories, teams, and environments.
 
-The strongest control is the pre-apply gate: evaluate the saved plan, store the OPA decision, and apply only if the decision allows it.
+Recommended practices:
 
-For root modules, my preferred baseline is plan-based evaluation:
+- security or governance teams own the compliance intent
+- platform engineering owns the pipeline integration and developer experience
+- application teams consume the gate through standard CI/CD templates
+- policy bundles are versioned, tested, and promoted like other software artifacts
+- CI checks block non-compliant pull requests before merge
+- pre-apply checks enforce the exact saved plan before deployment
+- shared pipeline templates reduce the chance that teams skip the compliance stage
 
-1. generate a saved OpenTofu or Terraform plan
-2. export that plan to JSON
-3. evaluate the JSON with OPA
-4. return one decision document containing `violations` and `allow`
-5. show `violations` to engineers
-6. use `allow` to block or permit apply
-
-This keeps the policy decision close to what the IaC tool is actually going to do.
-
-HashiCorp’s [`tfpolicy`](https://developer.hashicorp.com/terraform/policy) is worth knowing about here. It targets a similar problem, but it is Terraform-specific and HCL-based. I chose OPA for this lab because it is a general policy engine. The same engine can be used for IaC checks, Kubernetes admission control, CI/CD decisions, and other platform guardrails.
+The strongest enforcement point is still the pre-apply gate: evaluate the saved plan, store the OPA decision, and apply only if the decision allows it. CI checks are useful, but the final control should be close to the deployment action.
 
 ## Conclusion
 
-The lab demonstrates a simple but important pattern: evaluate infrastructure intent before infrastructure is created.
+The problem this lab started with is common in cloud environments: compliance issues are often detected after infrastructure already exists. Runtime scanners are valuable, but when they are the first place a preventable IaC issue is discovered, the workflow is already reactive.
 
-The flow is straightforward:
+The purpose of this lab was to move that control point earlier. Instead of waiting for a live S3 bucket to be scanned after deployment, we used OPA to evaluate the OpenTofu plan before apply. That gives engineers feedback while the change is still code, and it gives the delivery workflow a clear decision before infrastructure is created.
 
-1. OpenTofu creates a saved plan.
-2. The saved plan is exported to JSON.
-3. OPA evaluates the plan JSON.
-4. OPA returns a decision document.
-5. Engineers see the policy violations.
-6. `tofu apply` runs only when the decision allows it.
+The article walked through the full path:
 
-In the non-compliant scenario, OpenTofu was still able to generate a valid plan. The issue was not syntax or provider configuration. The issue was that the planned S3 bucket did not meet the required security controls. OPA detected that and returned `allow: false`, which stopped the apply before infrastructure was created.
+- a realistic customer document storage scenario where an S3 bucket needs baseline security controls
+- the OpenTofu root module, reusable child module, and variable files used to generate compliant and non-compliant plans
+- why the exported plan JSON is the right artifact for policy evaluation
+- how the OPA policy layer receives plan data and returns a decision document
+- how Make orchestrates planning, OPA evaluation, and gated apply
+- how the same workflow reports violations during development and blocks non-compliant applies
 
-In the compliant scenario, the same workflow evaluated the saved plan, returned `allow: true`, and allowed OpenTofu to apply that exact plan.
+The most important technical point is that the policy gate evaluates the planned infrastructure, not just individual `.tf` files. By evaluating `planned_values` from the exported plan JSON, OPA sees the infrastructure shape after variables, module expansion, and provider schema processing. That makes the decision much closer to what OpenTofu is actually going to apply.
 
-Runtime scanners are still necessary. They detect drift, manual changes, service-level misconfiguration, and issues that only appear after deployment. But they should not be the first line of defense for violations that are already visible in the IaC plan.
+The second important point is the decision contract. OPA returns `violations` for engineers and `allow` for automation. That keeps the interface simple: humans get useful remediation context, and pipelines get a clear allow/deny signal.
 
-OPA gives teams a way to move those checks earlier. Engineers get feedback before deployment, CI can block unsafe changes before merge, and the apply path can enforce compliance against the exact plan that will be deployed.
+The design point is that the operating model can grow with the organization. A small team can keep policies in the same repo and run them locally. A platform team can package shared policies and enforce them in CI. A mature enterprise can centralize policy ownership and consume policy bundles through standard pipeline templates. The core pattern stays the same.
+
+Runtime scanners are still necessary. They detect drift, manual changes, service-level misconfiguration, and issues that only appear after deployment. But they should complement IaC compliance gates, not replace them.
+
+OPA gives teams a practical way to shift preventable cloud compliance failures earlier in the delivery lifecycle: before merge, before apply, and before the infrastructure exists.
