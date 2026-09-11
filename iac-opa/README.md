@@ -1,5 +1,7 @@
 # Open Policy Agent (OPA) as an IaC Compliance Gate for OpenTofu and Terraform
 
+Published article: [Open Policy Agent (OPA) as an IaC Compliance Gate for OpenTofu and Terraform](https://medium.com/@hamza.boulaares/open-policy-agent-opa-as-an-iac-compliance-gate-for-opentofu-and-terraform-ffb7538a3d1b)
+
 Infrastructure compliance is often detected too late.
 
 In many environments, insecure or non-compliant infrastructure is first discovered after it already exists in the cloud. Runtime scanners, CSPM platforms, AWS Config, Security Hub, and similar tools are valuable, but they usually operate after deployment. By that point, the resource already exists and the remediation work becomes reactive.
