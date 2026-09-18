@@ -1,0 +1,44 @@
+services:
+  primary:
+    image: mysql:8.0.34
+    container_name: mysql-primary
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_ADMIN_USER: ${MYSQL_ADMIN_USER:?Set MYSQL_ADMIN_USER in .env}
+      MYSQL_ADMIN_PASSWORD: ${MYSQL_ADMIN_PASSWORD:?Set MYSQL_ADMIN_PASSWORD in .env}
+      MYSQL_REPLICATION_USER: ${MYSQL_REPLICATION_USER:?Set MYSQL_REPLICATION_USER in .env}
+      MYSQL_REPLICATION_PASSWORD: ${MYSQL_REPLICATION_PASSWORD:?Set MYSQL_REPLICATION_PASSWORD in .env}
+    ports:
+      - "33060:3306"
+    volumes:
+      - ./data/primary:/var/lib/mysql
+      - ./mysql/primary/my.cnf:/etc/mysql/conf.d/lab.cnf:ro
+      - ./mysql/primary/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_ROOT_PASSWORD}\" mysqladmin ping --user=root --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  replica:
+    image: mysql:8.0.34
+    container_name: mysql-replica
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_ADMIN_USER: ${MYSQL_ADMIN_USER:?Set MYSQL_ADMIN_USER in .env}
+      MYSQL_ADMIN_PASSWORD: ${MYSQL_ADMIN_PASSWORD:?Set MYSQL_ADMIN_PASSWORD in .env}
+    ports:
+      - "33061:3306"
+    volumes:
+      - ./data/replica:/var/lib/mysql
+      - ./mysql/replica/my.cnf:/etc/mysql/conf.d/lab.cnf:ro
+      - ./mysql/replica/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_ROOT_PASSWORD}\" mysqladmin ping --user=root --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s

@@ -1,0 +1,18 @@
+CREATE DATABASE IF NOT EXISTS order_management
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS order_management.orders (
+  order_id BIGINT UNSIGNED NOT NULL,
+  tenant_id INT UNSIGNED NOT NULL,
+  customer_id BIGINT UNSIGNED NOT NULL,
+  status_code TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  total_amount_cents BIGINT UNSIGNED NOT NULL,
+  version BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  payload VARBINARY(128) NOT NULL,
+  created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+    ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (order_id),
+  KEY idx_tenant_order (tenant_id, order_id)
+) ENGINE = InnoDB;
