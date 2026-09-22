@@ -9,6 +9,8 @@ services:
       MYSQL_ADMIN_PASSWORD: ${MYSQL_ADMIN_PASSWORD:?Set MYSQL_ADMIN_PASSWORD in .env}
       MYSQL_REPLICATION_USER: ${MYSQL_REPLICATION_USER:?Set MYSQL_REPLICATION_USER in .env}
       MYSQL_REPLICATION_PASSWORD: ${MYSQL_REPLICATION_PASSWORD:?Set MYSQL_REPLICATION_PASSWORD in .env}
+      MYSQL_APP_USER: ${MYSQL_APP_USER:?Set MYSQL_APP_USER in .env}
+      MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD:?Set MYSQL_APP_PASSWORD in .env}
     ports:
       - "33060:3306"
     volumes:
@@ -21,6 +23,19 @@ services:
       timeout: 3s
       retries: 30
       start_period: 20s
+
+  workload:
+    build:
+      context: ./workload
+    profiles: ["tools"]
+    environment:
+      MYSQL_HOST: primary
+      MYSQL_PORT: 3306
+      MYSQL_APP_USER: ${MYSQL_APP_USER:?Set MYSQL_APP_USER in .env}
+      MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD:?Set MYSQL_APP_PASSWORD in .env}
+    depends_on:
+      primary:
+        condition: service_healthy
 
   replica:
     image: mysql:8.0.34

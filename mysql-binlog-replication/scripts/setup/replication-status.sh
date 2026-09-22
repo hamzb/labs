@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-LAB_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+LAB_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 
 cd "${LAB_DIR}"
 
@@ -39,7 +39,7 @@ replica_mysql() {
 replica_status="$(replica_mysql --vertical --execute='SHOW REPLICA STATUS')"
 
 if [[ -z "${replica_status}" ]]; then
-  echo "Replication is not configured. Run: ./scripts/setup-replication.sh" >&2
+  echo "Replication is not configured. Run: ./scripts/setup/setup-replication.sh" >&2
   exit 1
 fi
 

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-LAB_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+LAB_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 
 cd "${LAB_DIR}"
 
@@ -18,7 +18,11 @@ set -a
 source .env
 set +a
 
-for variable in MYSQL_ADMIN_USER MYSQL_ADMIN_PASSWORD; do
+for variable in \
+  MYSQL_ADMIN_USER \
+  MYSQL_ADMIN_PASSWORD \
+  MYSQL_APP_USER \
+  MYSQL_APP_PASSWORD; do
   if [[ ! -v "${variable}" || -z "${!variable}" ]]; then
     echo "${variable} must be set to a non-empty value in ${LAB_DIR}/.env." >&2
     exit 1
@@ -45,8 +49,8 @@ for service in primary replica; do
   fi
 done
 
-if ! ./scripts/replication-status.sh >/dev/null; then
-  echo "Replication is not healthy. Run ./scripts/replication-status.sh for details." >&2
+if ! ./scripts/setup/replication-status.sh >/dev/null; then
+  echo "Replication is not healthy. Run ./scripts/setup/replication-status.sh for details." >&2
   exit 1
 fi
 
@@ -59,10 +63,27 @@ mysql_service() {
     "${service}" mysql --user="${MYSQL_ADMIN_USER}" "$@"
 }
 
+sql_escape() {
+  local value="$1"
+
+  value="${value//\\/\\\\}"
+  value="${value//\'/\'\'}"
+  printf '%s' "${value}"
+}
+
 echo "Resetting order_management and seeding ${order_count} orders across ${tenant_count} tenants."
 
 mysql_service primary --execute='DROP DATABASE IF EXISTS order_management;'
 mysql_service primary < workload/schema.sql
+
+app_user="$(sql_escape "${MYSQL_APP_USER}")"
+app_password="$(sql_escape "${MYSQL_APP_PASSWORD}")"
+
+mysql_service primary <<SQL
+CREATE USER IF NOT EXISTS '${app_user}'@'%' IDENTIFIED BY '${app_password}';
+ALTER USER '${app_user}'@'%' IDENTIFIED BY '${app_password}';
+GRANT SELECT, UPDATE ON order_management.* TO '${app_user}'@'%';
+SQL
 
 mysql_service primary <<SQL
 SET SESSION cte_max_recursion_depth = $((order_count + 1));

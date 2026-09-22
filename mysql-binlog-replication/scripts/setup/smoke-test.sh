@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-LAB_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+LAB_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 
 cd "${LAB_DIR}"
 
@@ -46,7 +46,7 @@ io_state="$(sed -n 's/^[[:space:]]*Replica_IO_Running: //p' <<<"${replica_status
 sql_state="$(sed -n 's/^[[:space:]]*Replica_SQL_Running: //p' <<<"${replica_status}")"
 
 if [[ "${io_state}" != "Yes" || "${sql_state}" != "Yes" ]]; then
-  echo "Replication is not healthy. Run ./scripts/replication-status.sh for details." >&2
+  echo "Replication is not healthy. Run ./scripts/setup/replication-status.sh for details." >&2
   exit 1
 fi
 

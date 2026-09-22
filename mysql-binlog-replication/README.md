@@ -4,6 +4,11 @@ This repository will contain a reproducible MySQL binary log replication lab and
 
 The lab will focus on MySQL 8.0 replication behavior, with particular attention to parallel replication and transaction dependency tracking.
 
+Lab automation is grouped by responsibility:
+
+- `scripts/setup/` installs host dependencies, configures replication, initializes data, and verifies the lab.
+- `scripts/scenarios/` runs test workloads and collects experiment metrics.
+
 ## Local MySQL Servers
 
 Start the lab servers:
@@ -37,7 +42,7 @@ The primary also creates a dedicated replication user. Replication itself is con
 Configure GTID-based replication and wait for both replica threads to start:
 
 ```bash
-./scripts/setup-replication.sh
+./scripts/setup/setup-replication.sh
 ```
 
 Running the script again replaces the existing replica connection settings and starts replication from the replica's current GTID position.
@@ -45,13 +50,13 @@ Running the script again replaces the existing replica connection settings and s
 Inspect replication health and the current lag reported by MySQL:
 
 ```bash
-./scripts/replication-status.sh
+./scripts/setup/replication-status.sh
 ```
 
 Verify the complete replication path with a small write on the primary:
 
 ```bash
-./scripts/smoke-test.sh
+./scripts/setup/smoke-test.sh
 ```
 
 The smoke test creates `replication_lab.replication_smoke_test`, inserts and updates a uniquely tagged row on the primary, and waits for the final value to appear on the replica.
@@ -61,16 +66,50 @@ The smoke test creates `replication_lab.replication_smoke_test`, inserts and upd
 Create a deterministic order-management dataset on the primary and wait for it to replicate:
 
 ```bash
-./scripts/init-workload.sh
+./scripts/setup/init-workload.sh 200000 16
 ```
 
-The default dataset contains 100,000 orders distributed across 16 tenants. The order and tenant counts can be supplied explicitly:
+The initializer drops and recreates only the `order_management` database. It applies
+`workload/schema.sql`, seeds 200,000 deterministic orders across 16 tenants, and verifies the same
+dataset signature on the primary and replica.
+
+The workload uses the dedicated account configured by `MYSQL_APP_USER` and `MYSQL_APP_PASSWORD`. That account is limited to `SELECT` and `UPDATE` privileges on `order_management.*`.
+
+Install the host-side MySQL client used by the metric collectors:
 
 ```bash
-./scripts/init-workload.sh 250000 32
+./scripts/setup/install-host-dependencies.sh
 ```
 
-The initializer drops and recreates only the `order_management` database. It applies `workload/schema.sql`, seeds deterministic rows, and verifies the same dataset signature on the primary and replica.
+## Fixed-Backlog Experiment
+
+Run the three article scenarios against identical fixed backlogs:
+
+```bash
+RESULT_ROOT="results/fixed-backlog-$(date -u +%Y%m%dT%H%M%SZ)"
+
+./scripts/scenarios/run-fixed-backlog-experiment.sh \
+  COMMIT_ORDER "${RESULT_ROOT}/commit-order-1-worker" \
+  1 1000 100 1 200000
+
+./scripts/scenarios/run-fixed-backlog-experiment.sh \
+  COMMIT_ORDER "${RESULT_ROOT}/commit-order-4-workers" \
+  4 1000 100 1 200000
+
+./scripts/scenarios/run-fixed-backlog-experiment.sh \
+  WRITESET "${RESULT_ROOT}/writeset-4-workers" \
+  4 1000 100 1 200000
+```
+
+The positional values after the result directory are replica workers, transaction count, updates
+per transaction, source concurrency, and order count. The runner stops only the replica SQL
+thread while generating the exact backlog, waits for the receiver to fetch it, and then measures
+replica-only apply time. It also collects lag and worker activity until the target GTID set is
+executed.
+
+Each run creates CSV time series for `Seconds_Behind_Source` and replica worker activity, plus
+configuration snapshots, workload output, target GTID, and calculated apply metrics. See
+`workload/README.md` for the workload generator's inputs and behavior.
 
 MySQL data and binary log files are bind-mounted from the host:
 
