@@ -2,5 +2,6 @@
 !.env.example
 data/*
 !data/.gitignore
+results/
 __pycache__/
 *.pyc
