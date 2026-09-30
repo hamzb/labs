@@ -68,6 +68,16 @@ if ! command -v mysql >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker is not installed or not available in PATH." >&2
+  exit 1
+fi
+
+if ! docker compose ps --status running --services | grep -qx primary; then
+  echo "The primary service is not running. Start the lab with: docker compose up -d" >&2
+  exit 1
+fi
+
 resolved_result_dir="$(realpath -m "${result_dir}")"
 if [[ -d "${resolved_result_dir}" ]] && find "${resolved_result_dir}" -mindepth 1 -print -quit | grep -q .; then
   echo "Result directory is not empty: ${resolved_result_dir}" >&2
@@ -176,7 +186,7 @@ printf '%s\n' "${stopped_status}" > "${resolved_result_dir}/applier-stopped-stat
 
 workload_started_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 set +e
-./scripts/scenarios/run-workload.sh \
+docker compose --profile tools run --rm --build workload \
   --mode independent \
   --concurrency "${concurrency}" \
   --transactions "${transactions}" \
@@ -288,7 +298,7 @@ replica_query --execute="SHOW REPLICA STATUS\G" \
   printf 'target_position=%s\n' "${target_position}"
 } > "${resolved_result_dir}/metadata.env"
 
-echo "Fixed-backlog experiment complete."
+echo "Replica apply experiment complete."
 echo "  Tracking:          ${tracking}"
 echo "  Replica workers:   ${replica_workers}"
 echo "  Apply duration:    ${apply_duration_seconds} seconds"

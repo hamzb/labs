@@ -4,12 +4,17 @@ The Python workload generator simulates an order-processing application that sen
 transactions to the MySQL primary. The shell scripts operate and observe the lab; this program
 represents the application producing load.
 
-Run it through `scripts/scenarios/run-workload.sh`. The wrapper loads credentials from `.env`, verifies that
-the primary is running, builds the workload image, and starts the generator in a temporary
-container.
+The article experiment runs the generator through `scripts/scenarios/run-experiment.sh`. That
+script loads `.env`, configures replication, controls the replica SQL thread, starts metric
+collection, and then runs the generator in the `workload` Compose service.
+
+For ad hoc generator runs outside the full experiment, call the Compose service directly:
 
 ```bash
-./scripts/scenarios/run-workload.sh --concurrency 16 --duration 30 --order-count 100000
+docker compose --profile tools run --rm --build workload \
+  --concurrency 16 \
+  --duration 30 \
+  --order-count 100000
 ```
 
 ## Command-Line Inputs
@@ -32,7 +37,7 @@ to exceed `--order-count`. When neither run limit is supplied, `--duration 30` i
 Use a fixed transaction count when experiments need identical backlog sizes:
 
 ```bash
-./scripts/scenarios/run-workload.sh \
+docker compose --profile tools run --rm --build workload \
   --mode independent \
   --concurrency 1 \
   --transactions 1000 \
@@ -43,7 +48,7 @@ Use a fixed transaction count when experiments need identical backlog sizes:
 Use the built-in help to list the accepted arguments:
 
 ```bash
-./scripts/scenarios/run-workload.sh --help
+docker compose --profile tools run --rm --build workload --help
 ```
 
 ## Workload Modes
@@ -59,7 +64,7 @@ to focus on how dependency tracking affects replica parallelism without introduc
 conflicts between workers.
 
 ```bash
-./scripts/scenarios/run-workload.sh \
+docker compose --profile tools run --rm --build workload \
   --mode independent \
   --concurrency 32 \
   --duration 60 \
@@ -77,7 +82,7 @@ transactions that genuinely conflict. It can reduce primary throughput, and mult
 transactions can also produce lock waits or deadlocks.
 
 ```bash
-./scripts/scenarios/run-workload.sh \
+docker compose --profile tools run --rm --build workload \
   --mode hotspot \
   --hotspot-size 16 \
   --concurrency 32 \

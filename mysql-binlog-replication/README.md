@@ -66,11 +66,11 @@ The smoke test creates `replication_lab.replication_smoke_test`, inserts and upd
 Create a deterministic order-management dataset on the primary and wait for it to replicate:
 
 ```bash
-./scripts/setup/init-workload.sh 200000 16
+./scripts/setup/init-workload.sh 1000000 16
 ```
 
 The initializer drops and recreates only the `order_management` database. It applies
-`workload/schema.sql`, seeds 200,000 deterministic orders across 16 tenants, and verifies the same
+`workload/schema.sql`, seeds 1,000,000 deterministic orders across 16 tenants, and verifies the same
 dataset signature on the primary and replica.
 
 The workload uses the dedicated account configured by `MYSQL_APP_USER` and `MYSQL_APP_PASSWORD`. That account is limited to `SELECT` and `UPDATE` privileges on `order_management.*`.
@@ -81,24 +81,24 @@ Install the host-side MySQL client used by the metric collectors:
 ./scripts/setup/install-host-dependencies.sh
 ```
 
-## Fixed-Backlog Experiment
+## Replica Apply Experiment
 
 Run the three article scenarios against identical fixed backlogs:
 
 ```bash
-RESULT_ROOT="results/fixed-backlog-$(date -u +%Y%m%dT%H%M%SZ)"
+RESULT_ROOT="results/replica-apply-$(date -u +%Y%m%dT%H%M%SZ)"
 
-./scripts/scenarios/run-fixed-backlog-experiment.sh \
+./scripts/scenarios/run-experiment.sh \
   COMMIT_ORDER "${RESULT_ROOT}/commit-order-1-worker" \
-  1 1000 100 1 200000
+  1 10000 100 2 1000000
 
-./scripts/scenarios/run-fixed-backlog-experiment.sh \
+./scripts/scenarios/run-experiment.sh \
   COMMIT_ORDER "${RESULT_ROOT}/commit-order-4-workers" \
-  4 1000 100 1 200000
+  4 10000 100 2 1000000
 
-./scripts/scenarios/run-fixed-backlog-experiment.sh \
+./scripts/scenarios/run-experiment.sh \
   WRITESET "${RESULT_ROOT}/writeset-4-workers" \
-  4 1000 100 1 200000
+  4 10000 100 2 1000000
 ```
 
 The positional values after the result directory are replica workers, transaction count, updates
