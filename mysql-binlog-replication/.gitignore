@@ -1,7 +1,6 @@
 .env*
 !.env.example
-data/*
-!data/.gitignore
+data/
 results/
 __pycache__/
 *.pyc
