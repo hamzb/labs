@@ -632,6 +632,12 @@ The workload generator produced the same shape of workload in all three runs: 10
 also close across the runs: 29.75 TPS, 28.59 TPS, and 31.21 TPS. That makes the replica apply phase
 the part worth comparing.
 
+The table shows the final 1,000,000-row-update run used for the article, but the result pattern did
+not come from a single execution. The same comparison was run multiple times during the lab,
+including earlier runs with a smaller workload size. The exact numbers changed between runs, but the
+pattern remained consistent: adding workers under `COMMIT_ORDER` helped only modestly, while
+`WRITESET` made the four replica workers much more active.
+
 ### More Workers Helped, but Not Enough
 
 The first comparison is between `Scenario 1` and `Scenario 2`.
@@ -745,6 +751,19 @@ effect: even if they are valid, they can keep workers busy for longer and force 
 
 In those cases, MySQL may handle the transaction using non-write-set dependency tracking, which gives
 the replica less precise dependency information and can reduce parallel apply opportunities.
+
+This experiment does not prove that `WRITESET` is always the best answer for every workload. We did
+not test workloads dominated by conflicting row updates, hot rows, long-running transactions, or
+transactions with heavy execution time on the replica. Those patterns can reduce parallel apply even
+when write-set tracking is enabled.
+
+The test workload also used low client-side concurrency. A workload with higher source-side
+concurrency can create larger commit windows on the primary, which may allow `COMMIT_ORDER` to
+expose more parallelism than it did in this lab. That does not invalidate the result; it defines its
+scope.
+
+We chose this workload because it represents a common OLTP-style application pattern: short
+transactions that update existing business records, where most requests touch different rows instead of intentionally targeting the same hot row.
 
 The practical point is simple: before expecting `WRITESET` to improve replica apply performance,
 look at the workload and schema. Tables should have stable primary or unique keys, schema changes
