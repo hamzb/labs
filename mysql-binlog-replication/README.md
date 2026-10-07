@@ -181,8 +181,11 @@ schedules transactions, and whether worker commits preserve the relay-log order.
 The main setting that controls the number of available applier workers is
 `replica_parallel_workers`.
 
-- `replica_parallel_workers=0` uses a single SQL applier thread.
-- `replica_parallel_workers=N`, where `N` is greater than zero, creates `N` worker threads and one
+- `replica_parallel_workers=0` disables the coordinator/worker applier model and uses a single SQL
+  applier thread.
+- `replica_parallel_workers=1` uses one coordinator thread and one worker thread. This is a
+  single-worker baseline, but it still uses the coordinator/worker applier model.
+- `replica_parallel_workers=N`, where `N` is greater than one, creates `N` worker threads and one
   coordinator thread.
 
 The configured value is the maximum apply capacity available to the replica. It is not a guarantee
@@ -587,7 +590,8 @@ The meaning of the arguments passed to the script is:
 
 - `COMMIT_ORDER`: set `binlog_transaction_dependency_tracking=COMMIT_ORDER` on the primary
 - `${RESULT_ROOT}/commit-order-1-worker`: write this run's output files under this directory
-- `1`: configure the replica with `replica_parallel_workers=1`
+- `1`: configure the replica with `replica_parallel_workers=1`, a single-worker baseline that still
+  uses the coordinator/worker applier model
 - `10000`: generate 10,000 workload transactions
 - `100`: update 100 order rows per transaction
 - `2`: run 2 source-side workload workers
