@@ -1,5 +1,8 @@
 # A Practical Deep Dive into MySQL Binlog Replication Performance
 
+Published version on Medium:
+[A Practical Deep Dive into MySQL Binlog Replication Performance](https://medium.com/@hamza.boulaares/a-practical-deep-dive-into-mysql-binlog-replication-performance-71b6b6586f3f)
+
 ## Introduction
 
 In many MySQL deployments, binary logs replication runs without any issues under normal load. This tends to change when the workload becomes heavier. If the replica cannot apply transactions as
