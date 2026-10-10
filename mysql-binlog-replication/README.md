@@ -341,7 +341,7 @@ replica's relay log.
 
 ### Application Scenario
 
-The application model is an order-management system. The primary server owns an `order_management`
+The application model is an order-management system. The primary server hosts an `order_management`
 database with one main table, `order_management.orders`. Each row represents an order, and the
 workload updates existing orders rather than inserting new data during the experiment.
 
@@ -511,28 +511,23 @@ RESULT_ROOT="results/replica-apply-$(date -u +%Y%m%dT%H%M%SZ)"
 Then we run the three scenarios:
 
 ```bash
+# Scenario 1
 ./scripts/scenarios/run-experiment.sh \
   COMMIT_ORDER "${RESULT_ROOT}/commit-order-1-worker" \
   1 10000 100 2 1000000
 
+# Scenario 2
 ./scripts/scenarios/run-experiment.sh \
   COMMIT_ORDER "${RESULT_ROOT}/commit-order-4-workers" \
   4 10000 100 2 1000000
 
+# Scenario 3
 ./scripts/scenarios/run-experiment.sh \
   WRITESET "${RESULT_ROOT}/writeset-4-workers" \
   4 10000 100 2 1000000
 ```
 
-The arguments after the result directory configure the run. For example, in the first scenario:
-
-```bash
-./scripts/scenarios/run-experiment.sh \
-  COMMIT_ORDER "${RESULT_ROOT}/commit-order-1-worker" \
-  1 10000 100 2 1000000
-```
-
-The meaning of the arguments passed to the script is:
+The input arguments are explained below, we use the inputs of Scenario 1 as an example:
 
 - `COMMIT_ORDER`: set `binlog_transaction_dependency_tracking=COMMIT_ORDER` on the primary
 - `${RESULT_ROOT}/commit-order-1-worker`: write this run's output files under this directory
