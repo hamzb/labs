@@ -257,21 +257,12 @@ written into the binary log for multithreaded replicas.
 
 ### Dependency Tracking Modes
 
-For this article, the important values are `COMMIT_ORDER` and `WRITESET`.
+MySQL supports three dependency tracking values: `COMMIT_ORDER`, `WRITESET`, and
+`WRITESET_SESSION`. For this article, we focus on `COMMIT_ORDER` and `WRITESET`.
+`WRITESET_SESSION` keeps the `WRITESET` behavior but treats transactions from the same client
+session as dependent.
 
-- **`COMMIT_ORDER`:** MySQL computes dependency information from transaction commit timing. This is
-  the default value in MySQL 8.0. It can expose some parallelism when transactions overlap during
-  commit, but it can also be conservative when the workload reaches the primary in a mostly
-  sequential order.
-- **`WRITESET`:** MySQL computes dependency information using the rows changed by each transaction.
-  When transactions update different rows, MySQL can mark them as independent even if commit-order
-  tracking would not expose as much parallelism.
-
-MySQL also supports `WRITESET_SESSION`, which keeps the write-set behavior but treats transactions
-from the same client session as dependent. This article does not use it because the experiment
-compares the default `COMMIT_ORDER` behavior with `WRITESET`.
-
-### COMMIT_ORDER
+#### COMMIT_ORDER
 
 With `COMMIT_ORDER`, the primary records dependency information based on transaction commit timing.
 If transactions overlap in the right part of their commit lifecycle, MySQL can mark them as
@@ -285,7 +276,7 @@ That distinction matters for the experiment. A replica with multiple workers can
 worker at a time if the binary log metadata tells the coordinator that transactions must be applied
 in order.
 
-### WRITESET
+#### WRITESET
 
 With `WRITESET`, the primary looks at the rows changed by each transaction and computes a write set
 for the transaction. If two transactions have non-overlapping write sets, MySQL can record them as
