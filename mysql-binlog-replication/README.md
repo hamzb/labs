@@ -29,29 +29,14 @@ unavailable. They can also improve scalability for suitable workloads by serving
 other operations from replica servers instead of sending every request to the main server.
 
 In MySQL, native replication is built around the binary log. When binary logging is enabled, the
-primary server records committed database changes in binary log files. A replica server can then
-retrieve those events and apply them locally, keeping its data aligned with the primary server.
+primary server records committed database changes in binary log files. MySQL stores these changes in
+numbered binary log files and rotates to new files over time. A replica server can then retrieve
+those events and apply them locally, keeping its data aligned with the primary server.
 
 MySQL binary log replication is asynchronous by nature. The primary server can confirm a transaction
 commit without waiting for a replica to receive or apply it. This keeps replica processing out of the
 application's commit path, but it also means that a replica can fall behind when it cannot apply
 changes quickly enough.
-
-### The MySQL Binary Log
-
-A MySQL server continuously receives requests from client applications to insert, update, and delete
-data. These requests produce a growing flow of committed database transactions. Instead of writing
-all changes to one endlessly growing file, MySQL stores the binary log as an ordered series of
-numbered files:
-
-```text
-mysql-bin.000001
-mysql-bin.000002
-mysql-bin.000003
-```
-
-MySQL rotates to a new binary log file when the current file reaches its configured maximum size,
-the server restarts, or the logs are flushed.
 
 ### How Transactions Are Recorded in the Binary Log
 
@@ -228,16 +213,12 @@ preserving commit order does not break that chain or make more workers useful.
 
 ### Configured Workers vs Active Workers
 
-When evaluating parallel replication, the configured worker count is only one side of the picture.
-What matters during a workload is how many workers actually receive transactions and spend time
-applying them.
+Configured worker count shows available capacity. Active worker count shows how much parallel apply
+actually happens.
 
-A replica can be configured with four or eight workers and still behave close to a single-worker
-replica if the coordinator cannot find independent transactions to schedule. In that case, the extra
-workers exist, but they spend most of their time idle.
-
-This distinction gives the experiment its first measurement target. We need to measure not only how
-many workers are configured, but how many workers become active while the replica catches up.
+If the coordinator cannot find independent transactions to schedule, a replica with multiple workers
+can still behave close to a single-worker replica. That is why the experiment measures worker
+activity, not only worker configuration.
 
 The [replication threads documentation](https://dev.mysql.com/doc/refman/8.0/en/replication-threads.html)
 describes the coordinator and worker model. The
@@ -318,23 +299,12 @@ row-level independence instead of relying only on commit timing.
 to preserve the required order. Workloads with foreign keys, DDL, missing useful keys, or other
 serialization points can also reduce the amount of parallelism MySQL can expose.
 
-### How These Settings Fit Together
-
-To summarize what we covered in this section and the previous one, the settings fit
-together this way:
-
-- `replica_parallel_workers` controls available execution capacity on the replica.
-- `replica_parallel_type=LOGICAL_CLOCK` tells the replica to schedule work using binary log
-  dependency metadata.
-- `binlog_transaction_dependency_tracking` controls how the primary generates that metadata.
-
-The replica-side settings are easier to reason about: `replica_parallel_workers` defines worker
-capacity, and `replica_parallel_type=LOGICAL_CLOCK` tells the coordinator how to use dependency
-metadata. The less obvious question is how much the primary-side setting
-`binlog_transaction_dependency_tracking` affects replica apply performance. The experiment compares
-the available dependency tracking values, shows how replica apply performance is measured, and checks
-whether one value is always better or whether the result depends on the workload. Before running that
-experiment, the next section introduces the setup we will use.
+At this point, the settings can be grouped simply: `replica_parallel_workers` and
+`replica_parallel_type=LOGICAL_CLOCK` are replica-side settings, while
+`binlog_transaction_dependency_tracking` is a primary-side setting. The experiment compares how these
+settings affect replica apply performance, how that performance is measured, and whether the result
+depends on the workload. Before running the experiment, the next section introduces the setup we will
+use.
 
 The [MySQL binary logging options documentation](https://dev.mysql.com/doc/refman/8.0/en/replication-options-binary-log.html)
 describes `binlog_transaction_dependency_tracking`, `COMMIT_ORDER`, and `WRITESET` in more detail.
@@ -476,42 +446,24 @@ The comparison keeps these inputs constant across all runs:
 - 1,000,000 total row updates
 - `independent` row-selection mode (each workload worker updates a separate range of rows)
 
-### Workload Generator
+### Workload Generation and Experiment Control
 
-The workload generator simulates application traffic using the parameters described above. It
-creates transactions that update existing rows in `order_management.orders`, reports progress while
-it runs, and exits with a structured result summary.
-
-The generator lives in
-[`workload/generator.py`](https://github.com/hamzb/labs/blob/main/mysql-binlog-replication/workload/generator.py).
-We build the workload generator into a container image and run it through a Docker Compose service.
-This keeps the generator isolated from the host and makes experiment re-runs reproducible.
-
-The documented generator inputs are in
+The workload generator,
+[`workload/generator.py`](https://github.com/hamzb/labs/blob/main/mysql-binlog-replication/workload/generator.py),
+simulates application traffic by updating existing rows in `order_management.orders`. Its inputs are
+documented in
 [`workload/README.md`](https://github.com/hamzb/labs/blob/main/mysql-binlog-replication/workload/README.md).
 
-### Experiment Execution and Control Steps
-
-The experiment is run with
+The experiment is run through
 [`scripts/scenarios/run-experiment.sh`](https://github.com/hamzb/labs/blob/main/mysql-binlog-replication/scripts/scenarios/run-experiment.sh).
-This is the main experiment orchestration script. It runs the workload generator and performs the
-control steps around it: setting the dependency tracking mode, configuring the replica worker count,
-stopping and restarting the replica SQL thread, and collecting metrics.
+This script sets the dependency tracking mode, configures the replica worker count, runs the
+workload generator, controls the replica SQL thread, and collects metrics.
 
-Stopping only the replica SQL thread is what separates transaction delivery from transaction apply
-in this experiment. The I/O thread keeps running, so it continues receiving binary log events from
-the primary and stores them in the relay log, but the replica does not apply them yet.
-
-This creates a fixed backlog for the apply phase. If the replica SQL thread stayed fully active
-while the workload ran, the replica might apply each transaction soon after it arrived.
-
-When the replica keeps up with the primary, only a few transactions are waiting in the relay log.
-Extra workers may stay idle because the relay log has too little queued work. That makes it harder
-to isolate the effect of `binlog_transaction_dependency_tracking`.
-
-So during the experiment, we ensure that the receiver has fetched all transactions from the source
-MySQL server before re-enabling the replica SQL thread, to measure how quickly the replica applies
-the backlog.
+Before running the workload, the script stops only the replica SQL thread. The I/O thread keeps
+receiving binary log events from the primary and storing them in the relay log, but the replica does
+not apply them yet. This creates a fixed backlog, so the apply phase measures how quickly the
+replica processes already-fetched transactions instead of mixing apply speed with transaction
+arrival timing.
 
 ### Metrics Collected During the Experiment
 
@@ -747,58 +699,34 @@ the workload. It does not manufacture independence when the workload itself is d
 
 ### Workload Nature Can Limit the Use of WRITESET
 
-There is another limit to keep in mind: some workloads and schemas do not give MySQL enough usable
-dependency information for `WRITESET` to help.
+`WRITESET` helps only when MySQL can identify useful transaction independence. Tables without primary
+or unique keys, transactions that mix schema changes with data changes, foreign-key relationships,
+large transactions, and hot-row updates can all reduce the amount of safe parallelism available to
+the replica. In some cases, MySQL may also handle a transaction using non-write-set dependency
+tracking, which gives the replica less precise dependency information.
 
-For example, `WRITESET` depends on MySQL being able to identify which rows a transaction changed.
-Tables without primary or unique keys make that harder. Transactions that mix schema changes with
-data changes, or workloads with foreign-key relationships that create wider dependencies, can also
-reduce the amount of safe parallelism available to the replica. Large transactions have a similar
-effect: even if they are valid, they can keep workers busy for longer and force later work to wait.
+This lab does not prove that `WRITESET` is always better. We did not test workloads dominated by
+conflicting row updates, long-running transactions, or heavy replica execution time. We also used low
+client-side concurrency; higher source-side concurrency can create larger commit windows on the
+primary, which may allow `COMMIT_ORDER` to expose more parallelism than it did here.
 
-In those cases, MySQL may handle the transaction using non-write-set dependency tracking, which gives
-the replica less precise dependency information and can reduce parallel apply opportunities.
-
-This experiment does not prove that `WRITESET` is always the best answer for every workload. We did
-not test workloads dominated by conflicting row updates, hot rows, long-running transactions, or
-transactions with heavy execution time on the replica. Those patterns can reduce parallel apply even
-when write-set tracking is enabled.
-
-The test workload also used low client-side concurrency. A workload with higher source-side
-concurrency can create larger commit windows on the primary, which may allow `COMMIT_ORDER` to
-expose more parallelism than it did in this lab. That does not invalidate the result; it defines its
-scope.
-
-We chose this workload because it represents a common OLTP-style application pattern: short
-transactions that update existing business records, where most requests touch different rows instead of intentionally targeting the same hot row.
-
-The practical point is simple: before expecting `WRITESET` to improve replica apply performance,
-look at the workload and schema. Tables should have stable primary or unique keys, schema changes
-should not be mixed into heavy write periods, and large batch changes should be split into smaller
-transactions when possible. Otherwise, the replica may still have little dependency freedom even when
-the setting looks correct.
+We chose this workload because it represents a common OLTP-style pattern: short transactions updating
+existing business records, where most requests touch different rows rather than the same hot row. The
+practical point is simple: before expecting `WRITESET` to improve replica apply performance, check
+the workload shape and schema first.
 
 ## Conclusion
 
-The experiment started from a common replication tuning question: when a MySQL replica falls behind,
-is increasing the number of replica workers enough?
+Increasing `replica_parallel_workers` can add apply capacity, but it does not guarantee parallel
+apply. In this lab, moving from one worker to four workers under `COMMIT_ORDER` barely changed worker
+activity because the replica still had limited dependency information.
 
-In this lab, the answer was no. Moving from one worker to four workers under `COMMIT_ORDER` added
-capacity, but it did not create meaningful parallel apply. The replica still averaged close to one
-active worker.
+Changing the source-side dependency tracking to `WRITESET` allowed the same four workers to apply the
+backlog faster and recover lag sooner. The practical lesson is that replica apply performance depends
+on both available worker capacity and the dependency information generated by the primary.
 
-Changing the source-side dependency tracking to `WRITESET` changed the result. With the same four
-workers and the same workload shape, the replica used its workers more effectively, applied the
-backlog faster, and recovered replication lag sooner.
-
-The main lesson is that replica workers provide execution capacity, but dependency tracking
-determines whether that capacity is usable. More workers do not automatically mean more parallel
-apply, and `WRITESET` helps only when the workload contains transactions that can safely run in
-parallel.
-
-For real systems, the useful signal is not the configured worker count alone. Check worker activity,
-the dependency tracking mode, and the workload shape. Together, those explain replica apply
-performance better than replication lag alone.
+For real systems, do not look at worker count or replication lag alone. Check worker activity,
+dependency tracking, and workload shape together.
 
 The lab repository contains the Docker Compose setup, MySQL configuration, workload generator, and
 scenario scripts used to reproduce the comparison.
